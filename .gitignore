@@ -299,7 +299,8 @@ poetry.toml
 
 # LSP config files
 pyrightconfig.json
-
+Code_Analizer.py
+Code_Analizer.txt
 ### venv ###
 # Virtualenv
 # http://iamzed.com/2009/05/07/a-primer-on-virtualenv/
