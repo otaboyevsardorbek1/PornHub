@@ -42,6 +42,3 @@ repo - Give you a source code
 help - Guide for use
 ```
 
-### CREDITS 💖
-  
-* [Arya Zakaria](http://github.com/aryazakaria01)
