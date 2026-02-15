@@ -1,5 +1,7 @@
 import sys
 import logging
+import logging.handlers
+from logging.handlers import RotatingFileHandler
 import platform
 from importlib import import_module
 
@@ -7,7 +9,8 @@ from PornHub.bot import PornHub
 from PornHub.plugins import loadModule
 from pyrogram import idle
 from asyncio import get_event_loop_policy
-
+import pytz
+from datetime import datetime
 LOG_FILE_NAME = "PhLogs.txt"
 timezone = pytz.timezone('Asia/Jakarta')
 
