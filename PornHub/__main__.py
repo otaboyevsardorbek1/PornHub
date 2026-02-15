@@ -1,6 +1,5 @@
 import sys
 import logging
-import logging.handlers
 from logging.handlers import RotatingFileHandler
 import platform
 from importlib import import_module
