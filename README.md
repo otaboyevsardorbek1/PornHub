@@ -35,7 +35,7 @@ python3 -m PornHub # run the bot.
 ```
 
 
-### COMMAND FOR BOT [@PornHubBot](https://t.me/phdl_tgbot)
+### COMMAND FOR BOT 
 ```
 start - Start the bot
 repo - Give you a source code
