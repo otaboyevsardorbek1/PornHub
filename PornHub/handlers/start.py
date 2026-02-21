@@ -13,7 +13,16 @@ class StartStates(StatesGroup):
 @router.message(CommandStart(), F.chat.type == "private")
 async def cmd_start(message: Message, state: FSMContext):
     user_id = str(message.chat.id)
-    
+    # Yangi: Referral linkdan kelgan URL ni tekshirish
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1 and args[1].startswith("d_"):
+        url = args[1][2:]  # "d_" ni olib tashlash
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Yuklab olish", callback_data=f"d_{url}")],
+            [InlineKeyboardButton(text="🌐 Webda ko'rish", url=url)]
+        ])
+        await message.reply("🎬 Inline qidiruvdan video yuklab olish uchun tugmani bosing!", reply_markup=kb)
+        return  # Oldingi start message ni yubormaslik
     # Check if user exists
     try:
         with open("users.txt", "r") as f:
@@ -26,7 +35,7 @@ async def cmd_start(message: Message, state: FSMContext):
             f.write(user_id + "\n")
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="• Channel •", url=f"https://t.me/{config.SUB_CHAT}")],
+        [InlineKeyboardButton(text="• Channel •", url=f"https://t.me/{config.config.SUB_CHAT}")],
         [InlineKeyboardButton(text="Terms of use & Privacy", callback_data="terms")]
     ])
     

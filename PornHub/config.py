@@ -11,8 +11,10 @@ class Config:
     TOKEN: str = "6848099784:AAHGpAKp_ddCRSVk9XNxTXlcwf1d52pVEjg"
     
     LOG_CHAT: int = 6646928202
-    SUB_CHAT: str = "@prodevuzoff"
-    SUDOERS: List[int] = [6646928202]
-    PREFIXES: List[str] = ["/", "!", ".", "$", "-"]
+    SUB_CHAT: str = "free_treding_uz"
+    SUDOERS= [6646928202]
+    PREFIXES = ["/", "!", ".", "$", "-"]
+    PREMIUM_USERS= []  # Premium user ID lar
+
 
 config = Config()
