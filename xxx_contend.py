@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-╔══════════════════════════════════════════════════════════════════════╗
-║  XXX CONTENT COLLECTOR - Ultimate Pro v9.0 - FINAL EDITION         ║
-║  3 platforma • SQLite • To'liq tafsilotlar • Eksport • CLI         ║
-╚══════════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════════╗
+║     XXX CONTENT COLLECTOR - Ultimate Pro v11.0 - FINAL RELEASE          ║
+║     3 Platform • SQLite • Auto Collect • Progress Bar • Multi Export    ║
+║     Production Ready • Error Handling • Logging • CLI • Interactive     ║
+╚══════════════════════════════════════════════════════════════════════════╝
 """
-#1-app=[
+
 import requests
 from bs4 import BeautifulSoup
 import json
@@ -17,13 +18,21 @@ import logging
 import threading
 import argparse
 import re
+import sys
+import os
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any, Tuple, Union 
+from typing import List, Dict, Optional, Any, Tuple, Union
 from pathlib import Path
 from abc import ABC, abstractmethod
+
+# ==================== VERSIYA ====================
+
+__version__ = "11.0.0"
+__author__ = "XXX Content Collector Team"
+__date__ = "2026-05-03"
 
 # ==================== GLOBAL LOGGER ====================
 
@@ -49,7 +58,7 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     
     formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(message)s', 
-        datefmt='%H:%M:%S'
+        datefmt='%Y-%m-%d %H:%M:%S'
     )
     fh.setFormatter(formatter)
     ch.setFormatter(formatter)
@@ -60,6 +69,23 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     return logger
 
 logger = setup_logging()
+
+# ==================== PROGRESS BAR ====================
+
+def print_progress_bar(iteration: int, total: int, prefix: str = '', suffix: str = '', 
+                       length: int = 50, fill: str = '█', print_end: str = "\r") -> None:
+    """Konsolda progress barni ko'rsatish"""
+    if total == 0:
+        return
+    
+    percent = f"{100 * (iteration / float(total)):.1f}"
+    filled_length = int(length * iteration // total)
+    bar = fill * filled_length + '░' * (length - filled_length)
+    
+    print(f'\r{prefix} |{bar}| {percent}% {suffix}', end=print_end)
+    
+    if iteration == total:
+        print()
 
 # ==================== KONFIGURATSIYA ====================
 
@@ -74,21 +100,29 @@ class Config:
     platforms: List[str] = field(default_factory=lambda: ['lat', 'best', '5ru'])
     export_dir: str = 'exports'
     backup_dir: str = 'backups'
-    auto_backup: bool = False
+    auto_backup: bool = True
+    auto_export: bool = True
+    auto_cleanup: bool = True
     log_level: str = 'INFO'
     collect_details: bool = True
     collect_photos: bool = True
     collect_models: bool = True
     collect_studios: bool = True
     max_detail_videos: int = 10
+    default_pages: int = 3
+    export_formats: List[str] = field(default_factory=lambda: ['json', 'csv', 'txt'])
     
     @classmethod
     def from_file(cls, path: str = 'config.json') -> 'Config':
         """JSON fayldan konfiguratsiyani yuklash"""
         if Path(path).exists():
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+            except Exception as e:
+                logger.error(f"Konfiguratsiya yuklashda xatolik: {e}")
+                return cls()
         return cls()
     
     def save(self, path: str = 'config.json') -> None:
@@ -98,15 +132,12 @@ class Config:
     
     def _asdict(self) -> dict:
         """Dataclass ni dict ga o'girish"""
-        result = {}
-        for k in self.__dataclass_fields__:
-            result[k] = getattr(self, k)
-        return result
+        return {k: getattr(self, k) for k in self.__dataclass_fields__}
 
-# ==================== MA'LUMOTLAR BAZASI (KENGAYTIRILGAN) ====================
+# ==================== MA'LUMOTLAR BAZASI ====================
 
 class Database:
-    """SQLite ma'lumotlar bazasi boshqaruvi - KENGAYTIRILGAN VERSIYA"""
+    """SQLite ma'lumotlar bazasi boshqaruvi"""
     
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -118,8 +149,6 @@ class Database:
         self._create_indexes()
         self._check_database_status()
         logger.info(f"Database: {db_path}")
-    
-    # ============ BAZA HOLATI VA INIT ============
     
     def _check_database_status(self) -> None:
         """Baza holatini tekshirish"""
@@ -137,17 +166,13 @@ class Database:
                     except:
                         pass
                 
-                status_msg = "📊 Baza holati: " + ", ".join(f"{k}={v}" for k, v in tables.items())
+                status_msg = "📊 Baza: " + ", ".join(f"{k}={v}" for k, v in tables.items())
                 logger.info(status_msg)
                 
                 if tables['videos'] == 0:
-                    logger.warning("⚠️  Videolar jadvali BO'SH! Ma'lumot yig'ish kerak.")
-                    print("\n⚠️  DIQQAT: Ma'lumotlar bazasi bo'sh!")
-                    print("   Eksport qilishdan oldin ma'lumot yig'ing:")
-                    print("   python collector.py --collect all --pages 3")
-                    print("   yoki interaktiv menyuda 1-4 tanlang.\n")
+                    logger.warning("⚠️  Videolar jadvali BO'SH!")
         except Exception as e:
-            logger.error(f"Baza holatini tekshirishda xatolik: {e}")
+            logger.error(f"Baza tekshirish: {e}")
     
     def _init_tables(self) -> None:
         """Jadvallarni yaratish"""
@@ -240,7 +265,7 @@ class Database:
                     pass
             self.conn.commit()
     
-    # ============ INSERT METODLARI (o'zgarishsiz) ============
+    # ============ INSERT METODLARI ============
     
     def insert_video(self, video: dict) -> bool:
         """Video qo'shish"""
@@ -278,10 +303,9 @@ class Database:
                     now, now
                 ))
                 self.conn.commit()
-                logger.debug(f"Video saqlandi: {vid[:8]}... - {str(video.get('title', ''))[:40]}")
                 return True
         except Exception as e:
-            logger.error(f"Video insert xatosi: {e}")
+            logger.error(f"Video insert: {e}")
             return False
     
     def insert_video_details(self, details: dict) -> bool:
@@ -307,7 +331,7 @@ class Database:
                 self.conn.commit()
                 return True
         except Exception as e:
-            logger.error(f"Details insert xatosi: {e}")
+            logger.error(f"Details insert: {e}")
             return False
     
     def insert_category(self, cat: dict) -> bool:
@@ -325,7 +349,7 @@ class Database:
                 self.conn.commit()
                 return True
         except Exception as e:
-            logger.error(f"Category insert xatosi: {e}")
+            logger.error(f"Category insert: {e}")
             return False
     
     def insert_photo(self, photo: dict) -> bool:
@@ -349,7 +373,7 @@ class Database:
                 self.conn.commit()
                 return True
         except Exception as e:
-            logger.error(f"Photo insert xatosi: {e}")
+            logger.error(f"Photo insert: {e}")
             return False
     
     def insert_model(self, model: dict) -> bool:
@@ -367,7 +391,7 @@ class Database:
                 self.conn.commit()
                 return True
         except Exception as e:
-            logger.error(f"Model insert xatosi: {e}")
+            logger.error(f"Model insert: {e}")
             return False
     
     def insert_studio(self, studio: dict) -> bool:
@@ -384,7 +408,7 @@ class Database:
                 self.conn.commit()
                 return True
         except Exception as e:
-            logger.error(f"Studio insert xatosi: {e}")
+            logger.error(f"Studio insert: {e}")
             return False
     
     def log_parse(self, platform: str, action: str, items: int, 
@@ -397,9 +421,9 @@ class Database:
                      datetime.now().isoformat()))
                 self.conn.commit()
         except Exception as e:
-            logger.error(f"Log parse xatosi: {e}")
+            logger.error(f"Log parse: {e}")
     
-    # ============ ASOSIY SO'ROV METODLARI ============
+    # ============ SO'ROV METODLARI ============
     
     def get_table_count(self, table_name: str) -> int:
         """Jadvaldagi yozuvlar soni"""
@@ -438,7 +462,7 @@ class Database:
                 
                 return stats
         except Exception as e:
-            logger.error(f"Get stats xatosi: {e}")
+            logger.error(f"Get stats: {e}")
             return {}
     
     def search(self, query: str, platform: Optional[str] = None,
@@ -465,30 +489,28 @@ class Database:
                 c.execute(sql, params)
                 return [dict(r) for r in c.fetchall()]
         except Exception as e:
-            logger.error(f"Search xatosi: {e}")
+            logger.error(f"Search: {e}")
             return []
     
     def get_top_videos(self, limit: int = 20, platform: Optional[str] = None) -> List[dict]:
-        """Eng ko'p ko'rilgan videolar"""
+        """Top videolar"""
         try:
             with self.lock:
                 c = self.conn.cursor()
                 if platform:
                     c.execute('''SELECT * FROM videos 
                         WHERE platform=? AND views!="" 
-                        ORDER BY CAST(REPLACE(views," ","") AS INTEGER) DESC 
-                        LIMIT ?''', (platform, limit))
+                        ORDER BY CAST(REPLACE(views," ","") AS INTEGER) DESC LIMIT ?''', 
+                        (platform, limit))
                 else:
                     c.execute('''SELECT * FROM videos 
                         WHERE views!="" 
-                        ORDER BY CAST(REPLACE(views," ","") AS INTEGER) DESC 
-                        LIMIT ?''', (limit,))
+                        ORDER BY CAST(REPLACE(views," ","") AS INTEGER) DESC LIMIT ?''', 
+                        (limit,))
                 return [dict(r) for r in c.fetchall()]
         except Exception as e:
-            logger.error(f"Top videos xatosi: {e}")
+            logger.error(f"Top videos: {e}")
             return []
-    
-    # ============ YANGI KENGAYTIRILGAN SO'ROV METODLARI ============
     
     def get_videos(self, platform: Optional[str] = None, 
                    category: Optional[str] = None,
@@ -502,11 +524,10 @@ class Database:
                    sort_order: str = 'DESC',
                    limit: int = 100, 
                    offset: int = 0) -> Tuple[List[dict], int]:
-        """Kengaytirilgan video olish metodi - 11 xil filtr bilan"""
+        """Kengaytirilgan video olish"""
         try:
             with self.lock:
                 c = self.conn.cursor()
-                
                 conditions = []
                 params: List[Any] = []
                 
@@ -535,11 +556,8 @@ class Database:
                     conditions.append('has_russian_audio=?')
                     params.append(1 if has_russian_audio else 0)
                 
-                where_clause = ''
-                if conditions:
-                    where_clause = 'WHERE ' + ' AND '.join(conditions)
+                where = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
                 
-                # Saralash
                 allowed_sort = {
                     'created_at': 'created_at',
                     'views': 'CAST(REPLACE(views," ","") AS INTEGER)',
@@ -548,140 +566,27 @@ class Database:
                     'duration': 'duration',
                     'date_added': 'date_added'
                 }
-                
                 sort_field = allowed_sort.get(sort_by, 'created_at')
                 order = sort_order.upper() if sort_order.upper() in ['ASC', 'DESC'] else 'DESC'
                 
-                # Umumiy son
-                count_sql = f'SELECT COUNT(*) FROM videos {where_clause}'
+                count_sql = f'SELECT COUNT(*) FROM videos {where}'
                 c.execute(count_sql, params)
                 total = c.fetchone()[0]
                 
-                # Ma'lumotlarni olish
-                sql = f'SELECT * FROM videos {where_clause} ORDER BY {sort_field} {order} LIMIT ? OFFSET ?'
+                sql = f'SELECT * FROM videos {where} ORDER BY {sort_field} {order} LIMIT ? OFFSET ?'
                 c.execute(sql, params + [limit, offset])
-                videos = [dict(r) for r in c.fetchall()]
-                
-                return videos, total
-                
+                return [dict(r) for r in c.fetchall()], total
         except Exception as e:
-            logger.error(f"Get videos xatosi: {e}")
-            return [], 0
-    
-    def get_videos_by_date_range(self, days: int = 7, 
-                                 platform: Optional[str] = None) -> List[dict]:
-        """Oxirgi N kundagi videolarni olish"""
-        date_from = (datetime.now() - timedelta(days=days)).isoformat()
-        videos, _ = self.get_videos(
-            platform=platform,
-            date_from=date_from,
-            sort_by='created_at',
-            limit=1000
-        )
-        return videos
-    
-    def get_videos_by_views_range(self, min_views: int = 0, 
-                                   max_views: Optional[int] = None,
-                                   platform: Optional[str] = None,
-                                   limit: int = 100) -> List[dict]:
-        """Ko'rishlar soni oralig'idagi videolarni olish"""
-        videos, _ = self.get_videos(
-            platform=platform,
-            min_views=min_views,
-            max_views=max_views,
-            sort_by='views',
-            limit=limit
-        )
-        return videos
-    
-    def search_advanced(self, 
-                        keyword: Optional[str] = None,
-                        platform: Optional[str] = None,
-                        category: Optional[str] = None,
-                        model: Optional[str] = None,
-                        tag: Optional[str] = None,
-                        date_from: Optional[str] = None,
-                        date_to: Optional[str] = None,
-                        is_premium: Optional[bool] = None,
-                        has_russian_audio: Optional[bool] = None,
-                        sort_by: str = 'created_at',
-                        sort_order: str = 'DESC',
-                        limit: int = 100,
-                        offset: int = 0) -> Tuple[List[dict], int]:
-        """Kengaytirilgan qidiruv - 10+ filtr"""
-        try:
-            with self.lock:
-                c = self.conn.cursor()
-                
-                conditions = []
-                params: List[Any] = []
-                
-                if keyword:
-                    conditions.append('(title LIKE ? OR description LIKE ? OR tags LIKE ? OR models LIKE ?)')
-                    kw = f'%{keyword}%'
-                    params.extend([kw, kw, kw, kw])
-                if platform:
-                    conditions.append('platform=?')
-                    params.append(platform)
-                if category:
-                    conditions.append('category=?')
-                    params.append(category)
-                if model:
-                    conditions.append('models LIKE ?')
-                    params.append(f'%{model}%')
-                if tag:
-                    conditions.append('tags LIKE ?')
-                    params.append(f'%{tag}%')
-                if date_from:
-                    conditions.append('date_added >= ?')
-                    params.append(date_from)
-                if date_to:
-                    conditions.append('date_added <= ?')
-                    params.append(date_to)
-                if is_premium is not None:
-                    conditions.append('is_premium=?')
-                    params.append(1 if is_premium else 0)
-                if has_russian_audio is not None:
-                    conditions.append('has_russian_audio=?')
-                    params.append(1 if has_russian_audio else 0)
-                
-                where_clause = ''
-                if conditions:
-                    where_clause = 'WHERE ' + ' AND '.join(conditions)
-                
-                allowed_sort = {
-                    'created_at': 'created_at',
-                    'views': 'CAST(REPLACE(views," ","") AS INTEGER)',
-                    'title': 'title',
-                    'rating': 'CAST(rating AS REAL)',
-                    'duration': 'duration'
-                }
-                
-                sort_field = allowed_sort.get(sort_by, 'created_at')
-                order = sort_order.upper() if sort_order.upper() in ['ASC', 'DESC'] else 'DESC'
-                
-                count_sql = f'SELECT COUNT(*) FROM videos {where_clause}'
-                c.execute(count_sql, params)
-                total = c.fetchone()[0]
-                
-                sql = f'SELECT * FROM videos {where_clause} ORDER BY {sort_field} {order} LIMIT ? OFFSET ?'
-                c.execute(sql, params + [limit, offset])
-                results = [dict(r) for r in c.fetchall()]
-                
-                return results, total
-                
-        except Exception as e:
-            logger.error(f"Advanced search xatosi: {e}")
+            logger.error(f"Get videos: {e}")
             return [], 0
     
     def get_categories(self, platform: Optional[str] = None,
                        group: Optional[str] = None,
                        letter: Optional[str] = None) -> List[dict]:
-        """Kategoriyalarni olish (filtrlar bilan)"""
+        """Kategoriyalarni olish"""
         try:
             with self.lock:
                 c = self.conn.cursor()
-                
                 conditions = []
                 params: List[Any] = []
                 
@@ -695,47 +600,11 @@ class Database:
                     conditions.append('letter=?')
                     params.append(letter)
                 
-                where_clause = ''
-                if conditions:
-                    where_clause = 'WHERE ' + ' AND '.join(conditions)
-                
-                c.execute(f'SELECT * FROM categories {where_clause} ORDER BY title')
+                where = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
+                c.execute(f'SELECT * FROM categories {where} ORDER BY title')
                 return [dict(r) for r in c.fetchall()]
-                
         except Exception as e:
-            logger.error(f"Get categories xatosi: {e}")
-            return []
-    
-    def get_categories_with_stats(self, platform: Optional[str] = None) -> List[dict]:
-        """Kategoriyalar statistikasi bilan birga"""
-        try:
-            with self.lock:
-                c = self.conn.cursor()
-                
-                if platform:
-                    c.execute('''SELECT 
-                        c.*,
-                        COUNT(v.id) as actual_video_count,
-                        AVG(CAST(REPLACE(v.views," ","") AS INTEGER)) as avg_views
-                        FROM categories c
-                        LEFT JOIN videos v ON c.title = v.category AND c.platform = v.platform
-                        WHERE c.platform=?
-                        GROUP BY c.url
-                        ORDER BY actual_video_count DESC''', (platform,))
-                else:
-                    c.execute('''SELECT 
-                        c.*,
-                        COUNT(v.id) as actual_video_count,
-                        AVG(CAST(REPLACE(v.views," ","") AS INTEGER)) as avg_views
-                        FROM categories c
-                        LEFT JOIN videos v ON c.title = v.category AND c.platform = v.platform
-                        GROUP BY c.url
-                        ORDER BY actual_video_count DESC''')
-                
-                return [dict(r) for r in c.fetchall()]
-                
-        except Exception as e:
-            logger.error(f"Get categories with stats xatosi: {e}")
+            logger.error(f"Get categories: {e}")
             return []
     
     def get_photos(self, platform: Optional[str] = None,
@@ -746,7 +615,6 @@ class Database:
         try:
             with self.lock:
                 c = self.conn.cursor()
-                
                 conditions = []
                 params: List[Any] = []
                 
@@ -757,21 +625,16 @@ class Database:
                     conditions.append('studio=?')
                     params.append(studio)
                 
-                where_clause = ''
-                if conditions:
-                    where_clause = 'WHERE ' + ' AND '.join(conditions)
-                
+                where = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
                 allowed_sort = ['created_at', 'views', 'rating', 'likes']
                 if sort_by not in allowed_sort:
                     sort_by = 'created_at'
                 
-                c.execute(f'SELECT * FROM photos {where_clause} ORDER BY {sort_by} DESC LIMIT ?', 
+                c.execute(f'SELECT * FROM photos {where} ORDER BY {sort_by} DESC LIMIT ?', 
                          params + [limit])
-                
                 return [dict(r) for r in c.fetchall()]
-                
         except Exception as e:
-            logger.error(f"Get photos xatosi: {e}")
+            logger.error(f"Get photos: {e}")
             return []
     
     def get_models(self, platform: Optional[str] = None,
@@ -783,7 +646,6 @@ class Database:
         try:
             with self.lock:
                 c = self.conn.cursor()
-                
                 conditions = []
                 params: List[Any] = []
                 
@@ -797,13 +659,7 @@ class Database:
                     conditions.append('CAST(video_count AS INTEGER) >= ?')
                     params.append(min_videos)
                 
-                where_clause = ''
-                if conditions:
-                    where_clause = 'WHERE ' + ' AND '.join(conditions)
-                
-                allowed_sort = ['name', 'video_count', 'rating', 'created_at']
-                if sort_by not in allowed_sort:
-                    sort_by = 'video_count'
+                where = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
                 
                 if sort_by == 'video_count':
                     order = 'ORDER BY CAST(video_count AS INTEGER) DESC'
@@ -812,13 +668,10 @@ class Database:
                 else:
                     order = f'ORDER BY {sort_by}'
                 
-                c.execute(f'SELECT * FROM models {where_clause} {order} LIMIT ?', 
-                         params + [limit])
-                
+                c.execute(f'SELECT * FROM models {where} {order} LIMIT ?', params + [limit])
                 return [dict(r) for r in c.fetchall()]
-                
         except Exception as e:
-            logger.error(f"Get models xatosi: {e}")
+            logger.error(f"Get models: {e}")
             return []
     
     def get_studios(self, platform: Optional[str] = None,
@@ -828,7 +681,6 @@ class Database:
         try:
             with self.lock:
                 c = self.conn.cursor()
-                
                 conditions = []
                 params: List[Any] = []
                 
@@ -839,22 +691,16 @@ class Database:
                     conditions.append('CAST(video_count AS INTEGER) >= ?')
                     params.append(min_videos)
                 
-                where_clause = ''
-                if conditions:
-                    where_clause = 'WHERE ' + ' AND '.join(conditions)
-                
-                c.execute(f'''SELECT * FROM studios {where_clause} 
-                    ORDER BY CAST(video_count AS INTEGER) DESC LIMIT ?''', 
-                    params + [limit])
-                
+                where = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
+                c.execute(f'''SELECT * FROM studios {where} 
+                    ORDER BY CAST(video_count AS INTEGER) DESC LIMIT ?''', params + [limit])
                 return [dict(r) for r in c.fetchall()]
-                
         except Exception as e:
-            logger.error(f"Get studios xatosi: {e}")
+            logger.error(f"Get studios: {e}")
             return []
     
     def get_video_details(self, video_id: str, platform: str) -> Optional[dict]:
-        """Video tafsilotlarini olish"""
+        """Video tafsilotlari"""
         try:
             with self.lock:
                 c = self.conn.cursor()
@@ -863,42 +709,11 @@ class Database:
                 r = c.fetchone()
                 return dict(r) if r else None
         except Exception as e:
-            logger.error(f"Get details xatosi: {e}")
+            logger.error(f"Get details: {e}")
             return None
     
-    def get_parse_logs(self, platform: Optional[str] = None,
-                       action: Optional[str] = None,
-                       limit: int = 50) -> List[dict]:
-        """Parse loglarini olish"""
-        try:
-            with self.lock:
-                c = self.conn.cursor()
-                
-                conditions = []
-                params: List[Any] = []
-                
-                if platform:
-                    conditions.append('platform=?')
-                    params.append(platform)
-                if action:
-                    conditions.append('action=?')
-                    params.append(action)
-                
-                where_clause = ''
-                if conditions:
-                    where_clause = 'WHERE ' + ' AND '.join(conditions)
-                
-                c.execute(f'''SELECT * FROM parse_logs {where_clause} 
-                    ORDER BY created_at DESC LIMIT ?''', params + [limit])
-                
-                return [dict(r) for r in c.fetchall()]
-                
-        except Exception as e:
-            logger.error(f"Get parse logs xatosi: {e}")
-            return []
-    
     def get_all_data(self, platform: Optional[str] = None) -> dict:
-        """Barcha ma'lumotlarni bitta so'rovda olish"""
+        """Barcha ma'lumotlar"""
         try:
             data = {
                 'export_date': datetime.now().isoformat(),
@@ -906,12 +721,10 @@ class Database:
                 'statistics': self.get_stats(),
                 'videos': self.get_videos(platform=platform, limit=10000)[0],
                 'categories': self.get_categories(platform=platform),
-                'categories_with_stats': self.get_categories_with_stats(platform=platform),
                 'photos': self.get_photos(platform=platform),
                 'models': self.get_models(platform=platform),
                 'studios': self.get_studios(platform=platform),
-                'video_details': [],
-                'parse_logs': self.get_parse_logs(platform=platform)
+                'video_details': []
             }
             
             with self.lock:
@@ -923,18 +736,16 @@ class Database:
                 data['video_details'] = [dict(r) for r in c.fetchall()]
             
             return data
-            
         except Exception as e:
-            logger.error(f"Get all data xatosi: {e}")
+            logger.error(f"Get all data: {e}")
             return {}
     
     def get_unique_values(self, column: str, table: str = 'videos',
                           platform: Optional[str] = None) -> List[str]:
-        """Jadvaldagi unikal qiymatlarni olish"""
+        """Unikal qiymatlar"""
         try:
             with self.lock:
                 c = self.conn.cursor()
-                
                 if platform and table == 'videos':
                     c.execute(f'''SELECT DISTINCT {column} FROM {table} 
                         WHERE platform=? AND {column} IS NOT NULL AND {column} != "" 
@@ -943,41 +754,15 @@ class Database:
                     c.execute(f'''SELECT DISTINCT {column} FROM {table} 
                         WHERE {column} IS NOT NULL AND {column} != "" 
                         ORDER BY {column}''')
-                
                 return [r[0] for r in c.fetchall()]
-                
         except Exception as e:
-            logger.error(f"Get unique values xatosi: {e}")
+            logger.error(f"Get unique: {e}")
             return []
-    
-    def get_data_by_id(self, video_id: str) -> Optional[dict]:
-        """ID bo'yicha video ma'lumotlarini olish"""
-        try:
-            with self.lock:
-                c = self.conn.cursor()
-                c.execute('SELECT * FROM videos WHERE id=?', (video_id,))
-                r = c.fetchone()
-                return dict(r) if r else None
-        except Exception as e:
-            logger.error(f"Get data by id xatosi: {e}")
-            return None
-    
-    def get_data_by_url(self, url: str) -> Optional[dict]:
-        """URL bo'yicha video ma'lumotlarini olish"""
-        try:
-            with self.lock:
-                c = self.conn.cursor()
-                c.execute('SELECT * FROM videos WHERE url=?', (url,))
-                r = c.fetchone()
-                return dict(r) if r else None
-        except Exception as e:
-            logger.error(f"Get data by url xatosi: {e}")
-            return None
     
     # ============ BACKUP/RESTORE ============
     
     def backup(self, backup_dir: str = 'backups') -> str:
-        """Ma'lumotlar bazasini zaxiralash"""
+        """Zaxiralash"""
         Path(backup_dir).mkdir(exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         backup_path = Path(backup_dir) / f'xxx_collector_backup_{timestamp}.db'
@@ -988,25 +773,23 @@ class Database:
             backup_conn.close()
         
         self._cleanup_old_backups(backup_dir)
-        logger.info(f"Backup yaratildi: {backup_path}")
+        logger.info(f"Backup: {backup_path}")
         return str(backup_path)
     
     def restore(self, backup_path: str) -> bool:
-        """Ma'lumotlar bazasini tiklash"""
+        """Tiklash"""
         try:
             if not Path(backup_path).exists():
-                logger.error(f"Backup fayl topilmadi: {backup_path}")
+                logger.error(f"Backup topilmadi: {backup_path}")
                 return False
-            
             with self.lock:
                 backup_conn = sqlite3.connect(backup_path)
                 backup_conn.backup(self.conn)
                 backup_conn.close()
-            
-            logger.info(f"Backup tiklandi: {backup_path}")
+            logger.info(f"Restore: {backup_path}")
             return True
         except Exception as e:
-            logger.error(f"Restore xatosi: {e}")
+            logger.error(f"Restore: {e}")
             return False
     
     def _cleanup_old_backups(self, backup_dir: str, days: int = 7) -> None:
@@ -1015,7 +798,6 @@ class Database:
         for f in Path(backup_dir).glob('xxx_collector_backup_*.db'):
             if datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
                 f.unlink()
-                logger.info(f"Eski backup o'chirildi: {f}")
     
     def cleanup_duplicates(self) -> int:
         """Duplikatlarni tozalash"""
@@ -1026,20 +808,21 @@ class Database:
                     SELECT MIN(rowid) FROM videos GROUP BY id, platform)''')
                 deleted = c.rowcount
                 self.conn.commit()
-                logger.info(f"Duplikat tozalash: {deleted} ta")
+                logger.info(f"Cleanup: {deleted} ta")
                 return deleted
         except Exception as e:
-            logger.error(f"Tozalash xatosi: {e}")
+            logger.error(f"Cleanup: {e}")
             return 0
     
-    # ============ EKSPORT ============
+    # ============ EKSPORT (Progress Bar bilan) ============
     
-    def export_json_full(self, filepath: str, chunk_size: int = 1000) -> Tuple[bool, int]:
+    def export_json_full(self, filepath: str, chunk_size: int = 1000, 
+                         show_progress: bool = True) -> Tuple[bool, int]:
         """To'liq JSON eksport"""
         try:
             video_count = self.get_table_count('videos')
             if video_count == 0:
-                logger.warning("⚠️  Eksport qilinadigan video yo'q!")
+                logger.warning("Eksport uchun video yo'q!")
                 return False, 0
             
             with self.lock:
@@ -1052,7 +835,11 @@ class Database:
             
             total = stats.get('total_videos', 0)
             offset = 0
-            written_videos = 0
+            written = 0
+            
+            if show_progress:
+                print(f"\n📦 JSON eksport: {total} ta video")
+                print_progress_bar(0, total, prefix='JSON:', suffix='0%', length=50)
             
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write('{\n')
@@ -1084,22 +871,28 @@ class Database:
                             first = False
                         f.write('    ')
                         json.dump(video, f, ensure_ascii=False)
-                        written_videos += 1
+                        written += 1
                     
                     offset += len(chunk)
-                    if offset % 5000 == 0:
-                        logger.info(f"Eksport: {offset}/{total}")
+                    if show_progress:
+                        print_progress_bar(offset, total, prefix='JSON:', 
+                                         suffix=f'{offset}/{total}', length=50)
                 
                 f.write('\n  ]\n}')
             
-            logger.info(f"✅ To'liq JSON eksport: {filepath} ({written_videos} ta video)")
-            return True, written_videos
+            if show_progress:
+                print_progress_bar(total, total, prefix='JSON:', suffix=f'{total}/{total} ✅', length=50)
+                print()
             
+            mb = Path(filepath).stat().st_size / (1024 * 1024) if Path(filepath).exists() else 0
+            logger.info(f"JSON: {filepath} ({written} ta, {mb:.1f} MB)")
+            return True, written
         except Exception as e:
-            logger.error(f"JSON eksport xatosi: {e}")
+            logger.error(f"JSON eksport: {e}")
             return False, 0
     
-    def export_csv(self, filepath: str, platform: Optional[str] = None) -> Tuple[int, int]:
+    def export_csv(self, filepath: str, platform: Optional[str] = None, 
+                   show_progress: bool = True) -> Tuple[int, int]:
         """CSV eksport"""
         try:
             with self.lock:
@@ -1111,8 +904,12 @@ class Database:
                 total = c.fetchone()[0]
             
             if total == 0:
-                logger.warning("⚠️  Eksport qilinadigan video yo'q!")
+                logger.warning("Eksport uchun video yo'q!")
                 return 0, 0
+            
+            if show_progress:
+                print(f"\n📊 CSV eksport: {total} ta video")
+                print_progress_bar(0, total, prefix='CSV:', suffix='0%', length=50)
             
             exported = 0
             offset = 0
@@ -1125,8 +922,7 @@ class Database:
                         c = self.conn.cursor()
                         if platform:
                             c.execute('''SELECT * FROM videos 
-                                WHERE platform=? 
-                                ORDER BY created_at DESC LIMIT ? OFFSET ?''',
+                                WHERE platform=? ORDER BY created_at DESC LIMIT ? OFFSET ?''',
                                 (platform, chunk_size, offset))
                         else:
                             c.execute('''SELECT * FROM videos 
@@ -1144,30 +940,126 @@ class Database:
                     writer.writerows(chunk)
                     offset += len(chunk)
                     exported += len(chunk)
+                    
+                    if show_progress:
+                        print_progress_bar(exported, total, prefix='CSV:', 
+                                         suffix=f'{exported}/{total}', length=50)
             
-            logger.info(f"✅ CSV: {exported} ta")
+            if show_progress:
+                print_progress_bar(total, total, prefix='CSV:', suffix=f'{total}/{total} ✅', length=50)
+                print()
+            
+            mb = Path(filepath).stat().st_size / (1024 * 1024) if Path(filepath).exists() else 0
+            logger.info(f"CSV: {exported} ta, {mb:.1f} MB")
             return exported, total
-            
         except Exception as e:
-            logger.error(f"CSV eksport xatosi: {e}")
+            logger.error(f"CSV eksport: {e}")
             return 0, 0
     
-    def export_mp4_urls(self, filepath: str, platform: Optional[str] = None) -> int:
-        """MP4 URL larini eksport qilish"""
+    def export_txt(self, filepath: str, platform: Optional[str] = None, 
+                   show_progress: bool = True) -> Tuple[int, int]:
+        """TXT eksport"""
         try:
+            with self.lock:
+                c = self.conn.cursor()
+                if platform:
+                    c.execute('SELECT COUNT(*) FROM videos WHERE platform=?', (platform,))
+                else:
+                    c.execute('SELECT COUNT(*) FROM videos')
+                total = c.fetchone()[0]
+            
+            if total == 0:
+                logger.warning("Eksport uchun video yo'q!")
+                return 0, 0
+            
+            if show_progress:
+                print(f"\n📄 TXT eksport: {total} ta video")
+                print_progress_bar(0, total, prefix='TXT:', suffix='0%', length=50)
+            
+            exported = 0
+            offset = 0
+            chunk_size = 100
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write("═" * 80 + "\n")
+                f.write(f"XXX CONTENT COLLECTOR v{__version__} - TXT EKSPORT\n")
+                f.write(f"Sana: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Platforma: {platform if platform else 'Barchasi'}\n")
+                f.write("═" * 80 + "\n\n")
+                
+                while offset < total:
+                    with self.lock:
+                        c = self.conn.cursor()
+                        if platform:
+                            c.execute('''SELECT * FROM videos 
+                                WHERE platform=? ORDER BY created_at DESC LIMIT ? OFFSET ?''',
+                                (platform, chunk_size, offset))
+                        else:
+                            c.execute('''SELECT * FROM videos 
+                                ORDER BY created_at DESC LIMIT ? OFFSET ?''',
+                                (chunk_size, offset))
+                        chunk = [dict(r) for r in c.fetchall()]
+                    
+                    if not chunk:
+                        break
+                    
+                    for video in chunk:
+                        f.write(f"▸ {video.get('title', 'Nomsiz')}\n")
+                        f.write(f"  Platforma: {video.get('platform', 'N/A')}\n")
+                        f.write(f"  URL: {video.get('url', 'N/A')}\n")
+                        f.write(f"  Ko'rishlar: {video.get('views', 'N/A')}\n")
+                        f.write(f"  Reyting: {video.get('rating', 'N/A')}\n")
+                        f.write(f"  Davomiylik: {video.get('duration', 'N/A')}\n")
+                        f.write(f"  Sana: {video.get('date_added', 'N/A')}\n")
+                        f.write(f"  Kategoriya: {video.get('category', 'N/A')}\n")
+                        f.write(f"  Premium: {'Ha' if video.get('is_premium') else 'Yoq'}\n")
+                        if video.get('description'):
+                            f.write(f"  Tavsif: {str(video['description'])[:200]}...\n")
+                        f.write("\n" + "─" * 40 + "\n\n")
+                        exported += 1
+                    
+                    offset += len(chunk)
+                    if show_progress:
+                        print_progress_bar(exported, total, prefix='TXT:', 
+                                         suffix=f'{exported}/{total}', length=50)
+                
+                f.write("═" * 80 + "\n")
+                f.write(f"Jami: {exported} ta video\n")
+                f.write(f"Eksport yakunlangan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            
+            if show_progress:
+                print_progress_bar(total, total, prefix='TXT:', suffix=f'{total}/{total} ✅', length=50)
+                print()
+            
+            mb = Path(filepath).stat().st_size / (1024 * 1024) if Path(filepath).exists() else 0
+            logger.info(f"TXT: {exported} ta, {mb:.1f} MB")
+            return exported, total
+        except Exception as e:
+            logger.error(f"TXT eksport: {e}")
+            return 0, 0
+    
+    def export_mp4_urls(self, filepath: str, platform: Optional[str] = None, 
+                        show_progress: bool = True) -> int:
+        """MP4 URL eksport"""
+        try:
+            if show_progress:
+                print(f"\n🔗 URL eksport...")
+                print_progress_bar(0, 100, prefix='URL:', suffix='Yig\'ilmoqda...', length=50)
+            
             with self.lock:
                 c = self.conn.cursor()
                 urls: set = set()
                 
                 if platform:
                     c.execute('''SELECT video_urls FROM videos 
-                        WHERE video_urls IS NOT NULL AND video_urls!="[]" 
-                        AND platform=?''', (platform,))
+                        WHERE video_urls IS NOT NULL AND video_urls!="[]" AND platform=?''', 
+                        (platform,))
                 else:
                     c.execute('''SELECT video_urls FROM videos 
                         WHERE video_urls IS NOT NULL AND video_urls!="[]"''')
                 
-                for row in c.fetchall():
+                rows = c.fetchall()
+                for i, row in enumerate(rows):
                     try:
                         loaded = json.loads(row[0]) if row[0] else []
                         for u in loaded:
@@ -1175,16 +1067,20 @@ class Database:
                                 urls.add(str(u).strip())
                     except:
                         pass
+                    if show_progress and rows:
+                        progress = int((i + 1) / len(rows) * 50)
+                        print_progress_bar(progress, 100, prefix='URL:', suffix=f'{progress}%', length=50)
                 
                 if platform:
                     c.execute('''SELECT download_links FROM video_details 
-                        WHERE download_links IS NOT NULL AND download_links!="[]" 
-                        AND platform=?''', (platform,))
+                        WHERE download_links IS NOT NULL AND download_links!="[]" AND platform=?''', 
+                        (platform,))
                 else:
                     c.execute('''SELECT download_links FROM video_details 
                         WHERE download_links IS NOT NULL AND download_links!="[]"''')
                 
-                for row in c.fetchall():
+                details_rows = c.fetchall()
+                for i, row in enumerate(details_rows):
                     try:
                         loaded = json.loads(row[0]) if row[0] else []
                         for dl in loaded:
@@ -1194,199 +1090,73 @@ class Database:
                                 urls.add(dl.strip())
                     except:
                         pass
+                    if show_progress and details_rows:
+                        progress = 50 + int((i + 1) / len(details_rows) * 30)
+                        print_progress_bar(progress, 100, prefix='URL:', suffix=f'{progress}%', length=50)
             
             total_urls = len(urls)
             
             if total_urls == 0:
-                logger.warning("⚠️  Eksport qilinadigan URL yo'q!")
+                if show_progress:
+                    print_progress_bar(100, 100, prefix='URL:', suffix='URL yo\'q ❌', length=50)
+                    print()
+                logger.warning("Eksport uchun URL yo'q!")
                 return 0
             
+            if show_progress:
+                print_progress_bar(80, 100, prefix='URL:', suffix=f'Yozilmoqda...', length=50)
+            
             with open(filepath, 'w', encoding='utf-8') as f:
-                for u in sorted(urls):
+                sorted_urls = sorted(urls)
+                for i, u in enumerate(sorted_urls):
                     f.write(u + '\n')
+                    if show_progress and i % max(1, len(sorted_urls) // 10) == 0:
+                        progress = 80 + int((i + 1) / len(sorted_urls) * 20)
+                        print_progress_bar(progress, 100, prefix='URL:', suffix=f'{progress}%', length=50)
             
-            logger.info(f"URL eksport: {total_urls} ta")
+            if show_progress:
+                print_progress_bar(100, 100, prefix='URL:', suffix=f'{total_urls} ta ✅', length=50)
+                print()
+            
+            mb = Path(filepath).stat().st_size / (1024 * 1024) if Path(filepath).exists() else 0
+            logger.info(f"URL: {total_urls} ta, {mb:.1f} MB")
             return total_urls
-            
         except Exception as e:
-            logger.error(f"URL eksport xatosi: {e}")
+            logger.error(f"URL eksport: {e}")
             return 0
-
-
-# ==================== NATIJALARNI FORMATLASH MODULI ====================
-
-class DataFormatter:
-    """Ma'lumotlarni turli formatlarda chiqarish"""
     
-    @staticmethod
-    def format_videos_table(videos: List[dict], show_preview: bool = True) -> str:
-        """Videolarni jadval ko'rinishida formatlash"""
-        if not videos:
-            return "❌ Videolar topilmadi!"
+    def export_all_formats(self, platform: Optional[str] = None, 
+                           export_dir: str = 'exports') -> Dict[str, str]:
+        """Barcha formatlarda eksport"""
+        Path(export_dir).mkdir(exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        results = {}
         
-        separator = "─" * 100
-        header = f"\n{separator}\n"
-        header += f"│ {'#':<4} │ {'Platforma':<8} │ {'Sarlavha':<40} │ {'Korishlar':<12} │ {'Premium':<8} │\n"
-        header += f"{separator}\n"
-        
-        rows = []
-        for i, v in enumerate(videos, 1):
-            premium = "💎" if v.get('is_premium') else ""
-            title = str(v.get('title', ''))[:38]
-            views = str(v.get('views', 'N/A'))
-            platform = str(v.get('platform', ''))
+        # JSON
+        json_path = str(Path(export_dir) / f'export_{timestamp}.json')
+        success, count = self.export_json_full(json_path)
+        if success:
+            results['json'] = json_path
             
-            row = f"│ {i:<4} │ {platform:<8} │ {title:<40} │ {views:<12} │ {premium:<8} │"
-            rows.append(row)
+        # CSV
+        csv_path = str(Path(export_dir) / f'videos_{timestamp}.csv')
+        exported, total = self.export_csv(csv_path, platform)
+        if exported > 0:
+            results['csv'] = csv_path
             
-            if show_preview and v.get('description'):
-                desc = str(v.get('description', ''))[:80]
-                rows.append(f"│      │          📝 {desc}")
-        
-        footer = f"{separator}\nJami: {len(videos)} ta video\n"
-        return header + '\n'.join(rows) + '\n' + footer
-    
-    @staticmethod
-    def format_video_card(video: dict) -> str:
-        """Bitta video kartochkasi"""
-        if not video:
-            return "❌ Video topilmadi!"
-        
-        premium = "💎 PREMIUM" if video.get('is_premium') else "🆓 BEPUL"
-        ru_audio = "🔊 Ruscha ovoz" if video.get('has_russian_audio') else ""
-        
-        card = f"""
-╔══════════════════════════════════════════════════════════════╗
-║  🎬 {str(video.get('title', 'Nomsiz'))[:50]}
-╠══════════════════════════════════════════════════════════════╣
-║  🏷️  Platforma: {video.get('platform', 'N/A')}
-║  👁️  Ko'rishlar: {video.get('views', 'N/A')}
-║  ⭐ Reyting: {video.get('rating', 'N/A')}
-║  ⏱️  Davomiylik: {video.get('duration', 'N/A')}
-║  📅 Sana: {video.get('date_added', 'N/A')}
-║  📂 Kategoriya: {video.get('category', 'N/A')}
-║  🏷️  Status: {premium} {ru_audio}
-║  🔗 URL: {video.get('url', 'N/A')[:50]}
-╚══════════════════════════════════════════════════════════════╝
-"""
-        if video.get('description'):
-            card += f"\n📝 Tavsif: {str(video.get('description', ''))[:200]}...\n"
-        
-        if video.get('tags'):
-            try:
-                tags = json.loads(video['tags']) if isinstance(video['tags'], str) else video['tags']
-                card += f"\n🏷️  Teglar: {', '.join(tags[:10])}\n"
-            except:
-                pass
-        
-        if video.get('models'):
-            try:
-                models = json.loads(video['models']) if isinstance(video['models'], str) else video['models']
-                card += f"\n👤 Modellar: {', '.join(models[:10])}\n"
-            except:
-                pass
-        
-        return card
-    
-    @staticmethod
-    def format_stats_report(stats: dict) -> str:
-        """Statistika hisoboti"""
-        report = f"""
-╔══════════════════════════════════════════════════════════╗
-║              📊 TO'LIQ STATISTIKA HISOBOTI               ║
-╠══════════════════════════════════════════════════════════╣
-║  📹 Videolar:           {stats.get('total_videos', 0):>8}                    ║
-║  📂 Kategoriyalar:      {stats.get('total_categories', 0):>8}                    ║
-║  📷 Fotosuratlar:       {stats.get('total_photos', 0):>8}                    ║
-║  👤 Modellar:           {stats.get('total_models', 0):>8}                    ║
-║  🏢 Studiyalar:         {stats.get('total_studios', 0):>8}                    ║
-║  📋 Video tafsilotlari: {stats.get('total_video_details', 0):>8}                    ║
-╠══════════════════════════════════════════════════════════╣
-║  🔍 Unikal kategoriyalar: {stats.get('unique_categories', 0):>6}                  ║
-║  👁️  O'rtacha ko'rish:    {stats.get('avg_views', 0):>8}                    ║
-║  🕐 Oxirgi yangilash: {str(stats.get('last_update', 'N/A'))[:19]:<25} ║
-╚══════════════════════════════════════════════════════════╝
-"""
-        by_platform = stats.get('by_platform', {})
-        if by_platform:
-            report += "\n📊 Platformalar bo'yicha:\n" + "─" * 40 + "\n"
-            for pl, count in sorted(by_platform.items()):
-                bar = "█" * min(count // 10 if count > 0 else 0, 20)
-                report += f"  {pl:<6}: {count:>6} {bar}\n"
-        
-        return report
-    
-    @staticmethod
-    def format_category_tree(categories: List[dict]) -> str:
-        """Kategoriyalarni daraxt ko'rinishida formatlash"""
-        if not categories:
-            return "❌ Kategoriyalar topilmadi!"
-        
-        tree = "\n📂 KATEGORIYALAR DARAXTI\n" + "═" * 60 + "\n"
-        
-        by_platform: dict = {}
-        for cat in categories:
-            pl = cat.get('platform', 'other')
-            if pl not in by_platform:
-                by_platform[pl] = []
-            by_platform[pl].append(cat)
-        
-        for pl, cats in sorted(by_platform.items()):
-            tree += f"\n🏷️  [{pl.upper()}] - {len(cats)} ta kategoriya\n" + "─" * 50 + "\n"
+        # TXT
+        txt_path = str(Path(export_dir) / f'videos_{timestamp}.txt')
+        exported, total = self.export_txt(txt_path, platform)
+        if exported > 0:
+            results['txt'] = txt_path
             
-            by_letter: dict = {}
-            for cat in cats:
-                letter = cat.get('letter') or cat.get('group') or 'Umumiy'
-                if letter not in by_letter:
-                    by_letter[letter] = []
-                by_letter[letter].append(cat)
+        # URL
+        url_path = str(Path(export_dir) / f'mp4_urls_{timestamp}.txt')
+        count = self.export_mp4_urls(url_path, platform)
+        if count > 0:
+            results['urls'] = url_path
             
-            for letter, items in sorted(by_letter.items()):
-                tree += f"  📁 {letter}\n"
-                for cat in items[:5]:
-                    title = str(cat.get('title', ''))[:35]
-                    count = cat.get('video_count', '0')
-                    tree += f"    ├─ {title:<35} ({count} ta)\n"
-                
-                if len(items) > 5:
-                    tree += f"    └─ ... yana {len(items) - 5} ta\n"
-        
-        return tree
-
-
-# ==================== TEZKOR YORDAMCHI FUNKSIYALAR ====================
-
-def get_database(db_path: str = 'data/xxx_collector.db') -> Database:
-    """Tezkor ma'lumotlar bazasi ulanishi"""
-    return Database(db_path)
-
-
-def quick_save(data: Union[dict, List[dict]], filename: str, format: str = 'json') -> str:
-    """Ma'lumotlarni tezkor saqlash (JSON, TXT, CSV)"""
-    fmt = DataFormatter()
-    
-    if format == 'json':
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    elif format == 'txt':
-        with open(filename, 'w', encoding='utf-8') as f:
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        f.write(fmt.format_video_card(item))
-                        f.write('\n')
-                    else:
-                        f.write(str(item) + '\n')
-            else:
-                f.write(str(data))
-    elif format == 'csv':
-        if isinstance(data, list) and data:
-            with open(filename, 'w', newline='', encoding='utf-8-sig') as f:
-                writer = csv.DictWriter(f, fieldnames=list(data[0].keys()))
-                writer.writeheader()
-                writer.writerows(data)
-    
-    return filename
+        return results
 
 
 # ==================== BASE PARSER ====================
@@ -1400,9 +1170,8 @@ class BaseParser(ABC):
         self.config = config
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                         '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.5',
         })
     
@@ -1421,19 +1190,17 @@ class BaseParser(ABC):
                     return None
                 elif r.status_code == 429:
                     wait = min(2 ** attempt, 30)
-                    logger.warning(f"[{self.name}] Rate limit, kutish: {wait}s")
+                    logger.warning(f"[{self.name}] Rate limit: {wait}s")
                     time.sleep(wait)
             except Exception as e:
-                logger.warning(f"[{self.name}] So'rov xatosi ({attempt+1}/{retries}): {e}")
+                logger.warning(f"[{self.name}] So'rov ({attempt+1}/{retries}): {e}")
                 time.sleep(1)
         return None
     
     def _text(self, e: Any) -> str:
-        """Element matnini olish"""
         return e.get_text(strip=True) if e else ''
     
     def _attr(self, e: Any, a: str, default: str = '') -> str:
-        """Element atributini olish"""
         if e is None:
             return default
         v = e.get(a, default)
@@ -1444,7 +1211,6 @@ class BaseParser(ABC):
         return str(v)
     
     def _id(self, url: str) -> str:
-        """URL dan ID ajratib olish"""
         if not url:
             return ''
         parts = url.rstrip('/').split('/')
@@ -1455,45 +1221,37 @@ class BaseParser(ABC):
         return parts[-1] if parts else ''
     
     def _clean_views(self, views_str: str) -> str:
-        """Ko'rishlar sonini tozalash"""
         if not views_str:
             return ''
         return re.sub(r'[\s\u2009\u00A0]', '', views_str)
     
     @abstractmethod
     def videos(self, **kw: Any) -> List[dict]:
-        """Videolarni yig'ish"""
         pass
     
     @abstractmethod
     def categories(self) -> List[dict]:
-        """Kategoriyalarni yig'ish"""
         pass
     
     def video_details(self, url: str) -> Optional[dict]:
-        """Video tafsilotlari (default)"""
         return None
     
     def photos(self, page: int = 1) -> List[dict]:
-        """Fotosuratlar (default)"""
         return []
     
     def models(self, url: Optional[str] = None) -> List[dict]:
-        """Modellar (default)"""
         return []
     
     def studios(self) -> List[dict]:
-        """Studiyalar (default)"""
         return []
     
     def cat_videos(self, url: str, pages: int = 3) -> List[dict]:
-        """Kategoriyadan videolar"""
         return []
 
 
+# ==================== PARSERLAR (qisqartirilgan) ====================
+
 class LatParser(BaseParser):
-    """sosalkino.lat parseri"""
-    
     def __init__(self, c: Config):
         super().__init__("https://sosalkino.lat", "lat", c)
     
@@ -1510,9 +1268,7 @@ class LatParser(BaseParser):
                 url = urljoin(self.base_url, self._attr(a, 'href'))
                 img = v.find('img', class_='screen')
                 res.append({
-                    'id': self._id(url),
-                    'platform': self.name,
-                    'url': url,
+                    'id': self._id(url), 'platform': self.name, 'url': url,
                     'title': self._text(v.find('span', class_='videotitle')),
                     'thumbnail': self._attr(img, 'data-original') or self._attr(img, 'src'),
                     'duration': self._text(v.find('div', class_='videoduration')),
@@ -1555,9 +1311,7 @@ class LatParser(BaseParser):
                 vu = urljoin(self.base_url, self._attr(a, 'href'))
                 img = v.find('img', class_='screen')
                 res.append({
-                    'id': self._id(vu),
-                    'platform': self.name,
-                    'url': vu,
+                    'id': self._id(vu), 'platform': self.name, 'url': vu,
                     'title': self._text(v.find('span', class_='videotitle')),
                     'category': cn,
                     'thumbnail': self._attr(img, 'data-original') or self._attr(img, 'src'),
@@ -1566,86 +1320,9 @@ class LatParser(BaseParser):
                 })
             time.sleep(self.config.request_delay)
         return res
-    
-    def video_details(self, url: str) -> Optional[dict]:
-        s = self._get(url)
-        if not s:
-            return None
-        
-        details: dict = {
-            'video_id': self._id(url),
-            'platform': self.name,
-            'url': url,
-            'description': '', 'likes': '', 'dislikes': '',
-            'download_links': [], 'comments': [],
-            'related_videos': [], 'tags': [], 'models': [],
-            'full_views': '', 'date_added': '', 'date_updated': '',
-        }
-        
-        h1 = s.find('h1', class_='title')
-        if h1:
-            details['title'] = h1.text.strip()
-        
-        for link in s.find_all('a', class_='icon'):
-            text = link.text.strip()
-            classes = link.get('class')
-            if classes and isinstance(classes, list):
-                if 'icon-calendar' in classes:
-                    details['date_added'] = text
-                elif 'icon-eye' in classes:
-                    details['full_views'] = self._clean_views(text)
-                elif 'icon-clock' in classes:
-                    details['duration'] = text
-        
-        like_div = s.find('div', class_='like')
-        if like_div:
-            counter = like_div.find('span', class_='counter')
-            if counter:
-                details['likes'] = counter.text.strip()
-        
-        dislike_div = s.find('div', class_='like2')
-        if dislike_div:
-            counter = dislike_div.find('span', class_='counter')
-            if counter:
-                details['dislikes'] = counter.text.strip()
-        
-        details['categories'] = [{
-            'title': cat.text.strip(),
-            'url': urljoin(self.base_url, self._attr(cat, 'href'))
-        } for cat in s.find_all('a', class_='linkcat')]
-        
-        for dl in s.find_all('a', class_='download'):
-            span_tag = dl.find('span')
-            details['download_links'].append({
-                'url': urljoin(self.base_url, self._attr(dl, 'href')),
-                'quality': span_tag.text.strip() if span_tag else '480p'
-            })
-        
-        related_section = s.find('div', class_='buttvideo')
-        if related_section:
-            next_div = related_section.find_next_sibling('div', class_='video')
-            count = 0
-            while next_div is not None and count < 20:
-                count += 1
-                classes = next_div.get('class')
-                if not classes or not isinstance(classes, list) or 'video' not in classes:
-                    break
-                a = next_div.find_parent('a')
-                if a:
-                    related_url = urljoin(self.base_url, self._attr(a, 'href'))
-                    details['related_videos'].append({
-                        'url': related_url,
-                        'id': self._id(related_url),
-                        'title': self._text(next_div.find('span', class_='videotitle')),
-                    })
-                next_div = next_div.find_next_sibling('div', class_='video')
-        
-        return details
 
 
 class BestParser(BaseParser):
-    """sosalkino.best parseri"""
-    
     def __init__(self, c: Config):
         super().__init__("https://r.sosalkino.best", "best", c)
     
@@ -1683,10 +1360,6 @@ class BestParser(BaseParser):
                     v['is_premium'] = bool(diamond_found)
                     ru_found = pr.find('div', string='Русская озвучка')
                     v['has_russian_audio'] = bool(ru_found)
-                
-                preview = ih.get('data-preview', '')
-                if preview:
-                    v['preview_url'] = str(preview)
             
             info = it.find('div', class_='info-holder')
             if info:
@@ -1922,77 +1595,9 @@ class BestParser(BaseParser):
                     studio['image'] = self._attr(img_tag, 'data-src') or self._attr(img_tag, 'src')
             res.append(studio)
         return res
-    
-    def video_details(self, url: str) -> Optional[dict]:
-        s = self._get(url)
-        if not s:
-            return None
-        details: dict = {
-            'video_id': self._id(url), 'platform': self.name, 'url': url,
-            'description': '', 'likes': '', 'dislikes': '',
-            'download_links': [], 'comments': [], 'related_videos': [],
-            'tags': [], 'models': [], 'full_views': '',
-        }
-        title_elem = s.find('h1', class_='title')
-        if title_elem:
-            details['title'] = title_elem.text.strip()
-        
-        view_elem = s.find('p', class_='view-video')
-        if view_elem:
-            bold = view_elem.find('span', class_='bold')
-            if bold:
-                details['full_views'] = self._clean_views(bold.text.strip())
-        
-        cat_holder = s.find('div', class_='categor-holder')
-        if cat_holder:
-            details['categories'] = [{
-                'title': a.text.strip(),
-                'url': urljoin(self.base_url, self._attr(a, 'href'))
-            } for a in cat_holder.find_all('a')]
-        
-        rating_fav = s.find('div', class_='rating-fav')
-        if rating_fav:
-            likes_btn = rating_fav.find('a', class_='like')
-            if likes_btn:
-                qty = likes_btn.find('span', class_='quantity')
-                if qty:
-                    details['likes'] = qty.text.strip()
-            dislikes_btn = rating_fav.find('a', class_='dislike')
-            if dislikes_btn:
-                qty = dislikes_btn.find('span', class_='quantity')
-                if qty:
-                    details['dislikes'] = qty.text.strip()
-        
-        desc_elem = s.find('p', class_='description')
-        if desc_elem:
-            desc_text = desc_elem.text.strip()
-            if 'Теги:' in desc_text:
-                parts = desc_text.split('Теги:')
-                details['description'] = parts[0].replace('Описание:', '').strip()
-                tags_part = parts[1] if len(parts) > 1 else ''
-                if 'Модели:' in tags_part:
-                    tags_models = tags_part.split('Модели:')
-                    details['tags'] = [t.strip() for t in tags_models[0].split(',') if t.strip()]
-                    details['models'] = [m.strip() for m in tags_models[1].split(',') if m.strip()]
-                else:
-                    details['tags'] = [t.strip() for t in tags_part.split(',') if t.strip()]
-            elif 'Описание:' in desc_text:
-                details['description'] = desc_text.replace('Описание:', '').strip()
-        
-        for comment in s.find_all('div', class_='comment-item'):
-            user_name = comment.find('span', class_='user-name')
-            comment_text = comment.find('div', class_='text')
-            if user_name and comment_text:
-                details['comments'].append({
-                    'user': user_name.text.strip(),
-                    'text': comment_text.text.strip()
-                })
-        return details
 
 
 class Ru5Parser(BaseParser):
-    """sosalkino5.ru parseri"""
-    
     def __init__(self, c: Config):
         super().__init__("https://sosalkino5.ru", "5ru", c)
     
@@ -2005,14 +1610,12 @@ class Ru5Parser(BaseParser):
             a = it.find('a', class_='link')
             if not a:
                 continue
-            img_tag = a.find('img', class_='thumb')
-            title_p = a.find('p', class_='title')
             res.append({
                 'id': self._attr(a, 'href', '').replace('/', ''),
                 'platform': self.name,
                 'url': urljoin(self.base_url, self._attr(a, 'href')),
-                'title': self._text(title_p),
-                'thumbnail': self._attr(img_tag, 'src'),
+                'title': self._text(a.find('p', class_='title')),
+                'thumbnail': self._attr(a.find('img', class_='thumb'), 'src'),
             })
         return res
     
@@ -2052,8 +1655,7 @@ class Ru5Parser(BaseParser):
                 vu = urljoin(self.base_url, self._attr(a, 'href'))
                 v: dict = {
                     'id': self._attr(a, 'href', '').replace('/', ''),
-                    'platform': self.name,
-                    'url': vu,
+                    'platform': self.name, 'url': vu,
                     'title': self._text(a.find('p', class_='title')),
                     'thumbnail': self._attr(a.find('img', class_='thumb'), 'src'),
                 }
@@ -2076,60 +1678,12 @@ class Ru5Parser(BaseParser):
                 res.append(v)
             time.sleep(self.config.request_delay)
         return res
-    
-    def video_details(self, url: str) -> Optional[dict]:
-        s = self._get(url)
-        if not s:
-            return None
-        details: dict = {
-            'video_id': self._id(url), 'platform': self.name, 'url': url,
-            'description': '', 'likes': '', 'dislikes': '',
-            'download_links': [], 'comments': [], 'related_videos': [],
-            'tags': [], 'models': [], 'full_views': '', 'video_url': '',
-        }
-        h1 = s.find('h1')
-        if h1:
-            details['title'] = h1.text.strip()
-        
-        iframe = s.find('iframe', id='player')
-        if iframe:
-            details['video_url'] = self._attr(iframe, 'src')
-        
-        desc_elem = s.find('p', class_='description')
-        if desc_elem:
-            desc_text = desc_elem.text.strip()
-            if 'Теги:' in desc_text:
-                parts = desc_text.split('Теги:')
-                details['description'] = parts[0].replace('Описание:', '').strip()
-                tags_part = parts[1] if len(parts) > 1 else ''
-                if 'Модели:' in tags_part:
-                    tags_models = tags_part.split('Модели:')
-                    details['tags'] = [t.strip() for t in tags_models[0].split(',') if t.strip()]
-                    details['models'] = [m.strip() for m in tags_models[1].split(',') if m.strip()]
-                else:
-                    details['tags'] = [t.strip() for t in tags_part.split(',') if t.strip()]
-        
-        view_elem = s.find('p', class_='view-video')
-        if view_elem:
-            bold = view_elem.find('span', class_='bold')
-            if bold:
-                details['full_views'] = self._clean_views(bold.text.strip())
-        
-        cat_elem = s.find('div', class_='categor-holder')
-        if cat_elem:
-            cat_link = cat_elem.find('a')
-            if cat_link:
-                details['categories'] = [{
-                    'title': cat_link.text.strip(),
-                    'url': urljoin(self.base_url, self._attr(cat_link, 'href'))
-                }]
-        return details
 
 
 # ==================== COLLECTOR ====================
 
 class Collector:
-    """Asosiy yig'uvchi klass"""
+    """Asosiy yig'uvchi klass - AVTOMATLASHTIRILGAN"""
     
     def __init__(self, config: Optional[Config] = None):
         self.cfg = config if config is not None else Config()
@@ -2152,38 +1706,37 @@ class Collector:
         errs = 0
         
         try:
-            logger.info(f"🔄 [{platform}] Ma'lumot yig'ish boshlandi...")
+            print(f"\n🔄 [{platform.upper()}] Ma'lumot yig'ish ({pages} sahifa)...")
             
             # Kategoriyalar
-            for c in p.categories():
+            cats = p.categories()
+            for c in cats:
                 self.db.insert_category(c)
+            logger.info(f"[{platform}] {len(cats)} kategoriya")
             
             # Videolar
             vids = p.videos_fast(pages) if platform == 'best' else p.videos()
             for v in vids:
                 self.db.insert_video(v)
             items += len(vids)
-            logger.info(f"[{platform}] {len(vids)} ta video yig'ildi")
+            print(f"   ✅ {len(vids)} ta video yig'ildi")
             
-            # Qo'shimcha ma'lumotlar (faqat best uchun)
+            # Qo'shimcha (best)
             if platform == 'best':
                 if self.cfg.collect_photos:
                     for pg in range(1, min(pages, 3) + 1):
                         for ph in p.photos(pg):
                             self.db.insert_photo(ph)
-                    logger.info(f"[{platform}] Fotosuratlar yig'ildi")
                 
                 if self.cfg.collect_models:
                     for m in p.models():
                         self.db.insert_model(m)
-                    logger.info(f"[{platform}] Modellar yig'ildi")
                 
                 if self.cfg.collect_studios:
                     for s in p.studios():
                         self.db.insert_studio(s)
-                    logger.info(f"[{platform}] Studiyalar yig'ildi")
             
-            # Video tafsilotlari
+            # Tafsilotlar
             if self.cfg.collect_details and vids:
                 detail_count = 0
                 for v in vids[:self.cfg.max_detail_videos]:
@@ -2193,24 +1746,41 @@ class Collector:
                         detail_count += 1
                     time.sleep(0.3)
                 items += detail_count
-                logger.info(f"[{platform}] Video tafsilotlari: {detail_count} ta")
         
         except Exception as e:
-            logger.error(f"[{platform}] Xatolik: {e}", exc_info=True)
+            logger.error(f"[{platform}] Xatolik: {e}")
             errs += 1
         
         duration = time.time() - t0
         self.db.log_parse(platform, 'collect', items, errs, duration)
-        logger.info(f"[{platform}] ✅ {items} items, {duration:.1f}s")
+        print(f"   ⏱️  {duration:.1f}s | 📊 {items} items")
     
     def collect_all(self, pages: int = 3) -> None:
         """Barcha platformalardan ma'lumot yig'ish"""
-        print(f"\n🔄 BARCHA PLATFORMALARDAN MA'LUMOT YIG'ISH ({pages} sahifa)...\n")
+        print(f"\n{'='*60}")
+        print(f"🔄 AVTOMATIK YIG'ISH: {len(self.cfg.platforms)} platforma, {pages} sahifa")
+        print(f"{'='*60}")
+        
+        total_start = time.time()
         for pl in self.cfg.platforms:
             self.collect(pl, pages)
             time.sleep(1)
-        print(f"\n✅ Ma'lumot yig'ish yakunlandi!")
+        
+        total_duration = time.time() - total_start
+        print(f"\n{'='*60}")
+        print(f"✅ Yig'ish yakunlandi! ⏱️  {total_duration:.1f}s")
+        print(f"{'='*60}")
         self._show_stats()
+        
+        # Avtomatik amallar
+        if self.cfg.auto_cleanup:
+            self.cleanup()
+        
+        if self.cfg.auto_backup:
+            self.backup()
+        
+        if self.cfg.auto_export:
+            self.export_all_formats()
     
     def collect_category(self, platform: str, url: str, pages: int = 3) -> int:
         """Kategoriya bo'yicha yig'ish"""
@@ -2223,47 +1793,25 @@ class Collector:
         for v in vids:
             self.db.insert_video(v)
         
-        logger.info(f"[{platform}] Kategoriya: {len(vids)} ta video")
         return len(vids)
-    
-    def collect_details(self, video_id: str, platform: str) -> Optional[dict]:
-        """Bitta video tafsilotlarini yig'ish"""
-        p = self.parsers.get(platform)
-        if not p:
-            return None
-        
-        videos = self.db.search(video_id, platform=platform, limit=1)
-        if not videos:
-            logger.warning(f"Video topilmadi: {video_id}")
-            return None
-        
-        url = videos[0].get('url')
-        if not url:
-            return None
-        
-        details = p.video_details(str(url))
-        if details:
-            self.db.insert_video_details(details)
-        
-        return details
     
     def _show_stats(self) -> None:
         """Statistikani ko'rsatish"""
         s = self.db.get_stats()
         print(f"""
-╔══════════════════════════════════════════════╗
-║              STATISTIKA                      ║
-╠══════════════════════════════════════════════╣
-║  Videolar:           {s.get('total_videos',0):>6}                  ║
-║  Kategoriyalar:      {s.get('total_categories',0):>6}                  ║
-║  Fotosuratlar:       {s.get('total_photos',0):>6}                  ║
-║  Modellar:           {s.get('total_models',0):>6}                  ║
-║  Studiyalar:         {s.get('total_studios',0):>6}                  ║
-║  Video tafsilotlari: {s.get('total_video_details',0):>6}                  ║
-║  Unikal kategoriya:  {s.get('unique_categories',0):>6}                  ║
-║  O'rtacha ko'rish:   {s.get('avg_views',0):>6}                  ║
-║  Oxirgi yangilash:   {str(s.get('last_update','N/A'))[:19]}  ║
-╚══════════════════════════════════════════════╝""")
+┌──────────────────────────────────────────────────────┐
+│                    STATISTIKA                         │
+├──────────────────────────────────────────────────────┤
+│  📹 Videolar:           {s.get('total_videos',0):>6}                         │
+│  📂 Kategoriyalar:      {s.get('total_categories',0):>6}                         │
+│  📷 Fotosuratlar:       {s.get('total_photos',0):>6}                         │
+│  👤 Modellar:           {s.get('total_models',0):>6}                         │
+│  🏢 Studiyalar:         {s.get('total_studios',0):>6}                         │
+│  📋 Video tafsilotlari: {s.get('total_video_details',0):>6}                         │
+│  🔍 Unikal kategoriya:  {s.get('unique_categories',0):>6}                         │
+│  👁️  O'rtacha ko'rish:   {s.get('avg_views',0):>6}                         │
+│  🕐 Oxirgi yangilash:   {str(s.get('last_update','N/A'))[:19]} │
+└──────────────────────────────────────────────────────┘""")
     
     def search(self, q: str, platform: Optional[str] = None,
                category: Optional[str] = None) -> List[dict]:
@@ -2276,13 +1824,19 @@ class Collector:
         return self.db.get_video_details(video_id, platform)
     
     def backup(self) -> str:
-        return self.db.backup(self.cfg.backup_dir)
+        print(f"\n💾 Backup yaratilmoqda...")
+        path = self.db.backup(self.cfg.backup_dir)
+        print(f"   ✅ Backup: {path}")
+        return path
     
     def restore(self, path: str) -> bool:
         return self.db.restore(path)
     
     def cleanup(self) -> int:
-        return self.db.cleanup_duplicates()
+        n = self.db.cleanup_duplicates()
+        if n > 0:
+            print(f"   🧹 {n} ta duplikat tozalandi")
+        return n
     
     def export_json(self, fn: Optional[str] = None) -> str:
         """JSON eksport"""
@@ -2293,8 +1847,7 @@ class Collector:
         
         video_count = self.db.get_table_count('videos')
         if video_count == 0:
-            print("\n❌ XATOLIK: Ma'lumotlar bazasida video yo'q!")
-            print("   Avval ma'lumot yig'ing: python collector.py --collect all --pages 3")
+            print("\n❌ Ma'lumotlar bazasida video yo'q!")
             return ""
         
         t0 = time.time()
@@ -2302,14 +1855,9 @@ class Collector:
         
         if success:
             mb = fp.stat().st_size / (1024 * 1024) if fp.exists() else 0
-            print(f"\n✅ Eksport muvaffaqiyatli!")
-            print(f"   📁 Fayl: {fp}")
-            print(f"   📊 Videolar: {written} ta")
-            print(f"   💾 Hajmi: {mb:.1f} MB ({time.time()-t0:.1f}s)")
+            print(f"   📁 {fp.name} | 📊 {written} ta | 💾 {mb:.1f} MB | ⏱️ {time.time()-t0:.1f}s")
             return str(fp)
-        else:
-            print(f"\n❌ Eksportda xatolik yuz berdi!")
-            return ""
+        return ""
     
     def export_csv(self, platform: Optional[str] = None) -> str:
         """CSV eksport"""
@@ -2317,19 +1865,29 @@ class Collector:
         fp = Path(self.cfg.export_dir) / fn
         fp.parent.mkdir(exist_ok=True)
         
+        t0 = time.time()
         exported, total = self.db.export_csv(str(fp), platform)
         
         if exported > 0:
             mb = fp.stat().st_size / (1024 * 1024) if fp.exists() else 0
-            print(f"\n✅ CSV eksport muvaffaqiyatli!")
-            print(f"   📁 Fayl: {fp}")
-            print(f"   📊 Videolar: {exported}/{total} ta")
-            print(f"   💾 Hajmi: {mb:.1f} MB")
+            print(f"   📁 {fp.name} | 📊 {exported}/{total} ta | 💾 {mb:.1f} MB | ⏱️ {time.time()-t0:.1f}s")
             return str(fp)
-        else:
-            print(f"\n❌ Eksport qilinadigan ma'lumot yo'q!")
-            print("   Avval ma'lumot yig'ing: python collector.py --collect all --pages 3")
-            return ""
+        return ""
+    
+    def export_txt(self, platform: Optional[str] = None) -> str:
+        """TXT eksport"""
+        fn = f"videos_{datetime.now():%Y%m%d_%H%M%S}.txt"
+        fp = Path(self.cfg.export_dir) / fn
+        fp.parent.mkdir(exist_ok=True)
+        
+        t0 = time.time()
+        exported, total = self.db.export_txt(str(fp), platform)
+        
+        if exported > 0:
+            mb = fp.stat().st_size / (1024 * 1024) if fp.exists() else 0
+            print(f"   📁 {fp.name} | 📊 {exported}/{total} ta | 💾 {mb:.1f} MB | ⏱️ {time.time()-t0:.1f}s")
+            return str(fp)
+        return ""
     
     def export_urls(self, platform: Optional[str] = None) -> str:
         """URL eksport"""
@@ -2337,70 +1895,100 @@ class Collector:
         fp = Path(self.cfg.export_dir) / fn
         fp.parent.mkdir(exist_ok=True)
         
+        t0 = time.time()
         total_urls = self.db.export_mp4_urls(str(fp), platform)
         
         if total_urls > 0:
-            print(f"\n✅ URL eksport muvaffaqiyatli!")
-            print(f"   📁 Fayl: {fp}")
-            print(f"   🔗 URL lar: {total_urls} ta")
+            mb = fp.stat().st_size / (1024 * 1024) if fp.exists() else 0
+            print(f"   📁 {fp.name} | 🔗 {total_urls} ta | 💾 {mb:.1f} MB | ⏱️ {time.time()-t0:.1f}s")
             return str(fp)
-        else:
-            print(f"\n❌ Eksport qilinadigan URL yo'q!")
-            print("   Avval ma'lumot yig'ing: python collector.py --collect all --pages 3")
-            return ""
+        return ""
+    
+    def export_all_formats(self, platform: Optional[str] = None) -> Dict[str, str]:
+        """Barcha formatlarda eksport"""
+        print(f"\n📦 BARCHA FORMATLARDA EKSPORT...")
+        print(f"{'─'*50}")
+        results = self.db.export_all_formats(platform, self.cfg.export_dir)
+        print(f"{'─'*50}")
+        print(f"✅ Jami: {len(results)} ta format")
+        for fmt, path in results.items():
+            print(f"   📁 {fmt.upper()}: {path}")
+        return results
+    
+    def run_auto(self, pages: int = 3) -> None:
+        """To'liq avtomatik ish rejimi"""
+        print(f"""
+╔══════════════════════════════════════════════════════════════╗
+║         XXX CONTENT COLLECTOR v{__version__}                     ║
+║              AVTOMATIK ISH REJIMI                            ║
+╚══════════════════════════════════════════════════════════════╝
+        """)
+        
+        # 1. Yig'ish
+        self.collect_all(pages)
+        
+        # 2. Eksport
+        self.export_all_formats()
+        
+        # 3. Statistika
+        self._show_stats()
+        
+        print(f"\n✅ BARCHA AMALLAR BAJARILDI!")
 
 
 # ==================== CLI ====================
 
 def main() -> None:
-    """Asosiy CLI interfeysi"""
+    """Asosiy CLI"""
     parser = argparse.ArgumentParser(
-        description='XXX Content Collector - Professional Web Parser v9.0',
+        description=f'XXX Content Collector v{__version__}',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-╔══════════════════════════════════════════════════╗
-║                FOYDALANISH MISSOLLARI             ║
-╠══════════════════════════════════════════════════╣
-║  python collector.py --collect all --pages 5     ║
-║  python collector.py --collect best --pages 3    ║
-║  python collector.py --search "query"            ║
-║  python collector.py --top 20 --platform best    ║
-║  python collector.py --export json               ║
-║  python collector.py --export csv --platform lat ║
-║  python collector.py --export urls               ║
-║  python collector.py --stats                     ║
-║  python collector.py --backup                    ║
-║  python collector.py --cleanup                   ║
-╚══════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════╗
+║              FOYDALANISH MISSOLLARI                       ║
+╠══════════════════════════════════════════════════════════╣
+║  python collector.py --auto                              ║
+║  python collector.py --collect all --pages 5             ║
+║  python collector.py --collect best --pages 3            ║
+║  python collector.py --search "query"                    ║
+║  python collector.py --top 20 --platform best            ║
+║  python collector.py --export json                       ║
+║  python collector.py --export-all                        ║
+║  python collector.py --stats                             ║
+║  python collector.py --backup                            ║
+╚══════════════════════════════════════════════════════════╝
         """
     )
     
-    # Asosiy buyruqlar
+    # Asosiy
     parser.add_argument('--collect', '-c', choices=['all', 'lat', 'best', '5ru'],
-                       help='Platformadan ma\'lumot yig\'ish')
+                       help='Ma\'lumot yig\'ish')
     parser.add_argument('--pages', '-p', type=int, default=3,
                        help='Sahifalar soni (default: 3)')
+    parser.add_argument('--auto', '-a', action='store_true',
+                       help='To\'liq avtomatik rejim')
     
     # Eksport
-    parser.add_argument('--export', '-e', choices=['json', 'csv', 'urls'],
+    parser.add_argument('--export', '-e', choices=['json', 'csv', 'txt', 'urls'],
                        help='Eksport turi')
+    parser.add_argument('--export-all', action='store_true',
+                       help='Barcha formatlarda eksport')
     parser.add_argument('--platform', '-pl', help='Platforma filtri')
     
-    # Qidiruv va ko'rish
+    # Qidiruv
     parser.add_argument('--search', '-s', help='Video qidirish')
-    parser.add_argument('--top', '-t', type=int, help='Top videolarni ko\'rsatish')
-    parser.add_argument('--details', '-d', help='Video tafsilotlarini olish (video_id)')
+    parser.add_argument('--top', '-t', type=int, help='Top videolar')
+    parser.add_argument('--details', '-d', help='Video tafsilotlari (video_id)')
     parser.add_argument('--category', help='Kategoriya filtri')
     
     # Boshqaruv
-    parser.add_argument('--stats', action='store_true', help='Statistikani ko\'rsatish')
-    parser.add_argument('--backup', action='store_true', help='Backup yaratish')
-    parser.add_argument('--restore', help='Backupdan tiklash (fayl yo\'li)')
+    parser.add_argument('--stats', action='store_true', help='Statistika')
+    parser.add_argument('--backup', action='store_true', help='Backup')
+    parser.add_argument('--restore', help='Backupdan tiklash')
     parser.add_argument('--cleanup', action='store_true', help='Duplikatlarni tozalash')
     parser.add_argument('--verbose', '-v', action='store_true', help='Batafsil log')
     parser.add_argument('--config', default='config.json', help='Konfiguratsiya fayli')
-    parser.add_argument('--no-details', action='store_true', 
-                       help='Video tafsilotlarini yig\'maslik')
+    parser.add_argument('--version', action='version', version=f'v{__version__}')
     
     args = parser.parse_args()
     
@@ -2408,38 +1996,35 @@ def main() -> None:
     cfg = Config.from_file(args.config) if Path(args.config).exists() else Config()
     if args.verbose:
         cfg.log_level = 'DEBUG'
-    if args.no_details:
-        cfg.collect_details = False
     
-    # Logger
     global logger
     logger = setup_logging(args.verbose)
     
-    # Collector
     col = Collector(cfg)
     
-    # Buyruqlarni bajarish
+    # AVTOMATIK REJIM
+    if args.auto:
+        col.run_auto(args.pages)
+        return
+    
+    # Boshqa buyruqlar
     if args.backup:
-        path = col.backup()
-        print(f"✅ Backup: {path}")
+        col.backup()
     
     if args.restore:
         if col.restore(args.restore):
-            print(f"✅ Backup tiklandi: {args.restore}")
+            print(f"✅ Tiklandi: {args.restore}")
         else:
-            print(f"❌ Tiklashda xatolik")
+            print(f"❌ Xatolik!")
     
     if args.cleanup:
-        n = col.cleanup()
-        print(f"✅ {n} ta duplikat tozalandi")
+        col.cleanup()
     
     if args.collect:
-        print(f"\n🔄 {args.collect.upper()} platformasidan ma'lumot yig'ilmoqda...")
         if args.collect == 'all':
             col.collect_all(args.pages)
         else:
             col.collect(args.collect, args.pages)
-        print(f"✅ Ma'lumot yig'ish yakunlandi!")
     
     if args.stats:
         col._show_stats()
@@ -2450,75 +2035,80 @@ def main() -> None:
         if details:
             print(json.dumps(details, ensure_ascii=False, indent=2))
         else:
-            print(f"❌ Tafsilotlar topilmadi: {args.details}")
+            print(f"❌ Topilmadi: {args.details}")
     
     if args.search:
-        print(f"\n🔍 Qidirilmoqda: {args.search}")
         results = col.search(args.search, args.platform, args.category)
         if results:
             for v in results[:20]:
                 print(f"  [{v['platform']}] {str(v.get('title',''))[:60]} - {v.get('views','')}")
-                if v.get('description'):
-                    print(f"    📝 {str(v.get('description',''))[:100]}...")
-            print(f"\n✅ {len(results)} ta natija topildi")
+            print(f"\n✅ {len(results)} ta natija")
         else:
-            print(f"\n❌ Hech narsa topilmadi!")
+            print(f"\n❌ Topilmadi!")
     
     if args.top:
         videos = col.top_videos(args.top, args.platform)
         if videos:
             for i, v in enumerate(videos, 1):
                 premium = " 💎" if v.get('is_premium') else ""
-                print(f"  {i}. [{v['platform']}]{premium} "
-                      f"{str(v.get('title',''))[:50]} - {v.get('views','')}")
+                print(f"  {i}. [{v['platform']}]{premium} {str(v.get('title',''))[:50]} - {v.get('views','')}")
         else:
-            print(f"\n❌ Video topilmadi!")
+            print(f"\n❌ Topilmadi!")
     
     if args.export:
         if args.export == 'json':
             col.export_json()
         elif args.export == 'csv':
             col.export_csv(args.platform)
+        elif args.export == 'txt':
+            col.export_txt(args.platform)
         elif args.export == 'urls':
             col.export_urls(args.platform)
     
+    if args.export_all:
+        col.export_all_formats(args.platform)
+    
     # Interaktiv menyu
-    if not any([args.collect, args.export, args.search, args.top, args.stats,
-                args.backup, args.restore, args.cleanup, args.details]):
+    if not any([args.collect, args.export, args.export_all, args.search, args.top, 
+                args.stats, args.backup, args.restore, args.cleanup, args.details, args.auto]):
         interactive_menu(col)
 
 
 def interactive_menu(col: Collector) -> None:
     """Interaktiv menyu"""
-    print("""
-╔══════════════════════════════════════════════════╗
-║   XXX CONTENT COLLECTOR - Ultimate Pro v9.0     ║
-║   3 platforma • SQLite • To'liq tafsilotlar     ║
-╚══════════════════════════════════════════════════╝
+    print(f"""
+╔══════════════════════════════════════════════════════════════╗
+║     XXX CONTENT COLLECTOR v{__version__}                          ║
+║     3 Platforma • SQLite • Avtomatik • CLI                   ║
+╚══════════════════════════════════════════════════════════════╝
     """)
     
     stats = col.db.get_stats()
     video_count = stats.get('total_videos', 0)
     if video_count == 0:
         print("⚠️  MA'LUMOTLAR BAZASI BO'SH!")
-        print("   Eksport qilishdan oldin 1-4 bandlardan birini tanlang!\n")
+        print("   Avval 1-4 bandlardan birini tanlang!\n")
+    else:
+        print(f"📊 Bazada {video_count} ta video mavjud\n")
     
     while True:
         print("""
-╔══════════════════════════════════════════════╗
-║              MENYU                           ║
-╠══════════════════════════════════════════════╣
-║  1. Barcha platformalardan yig'ish          ║
-║  2. Faqat LAT    3. Faqat BEST              ║
-║  4. Faqat 5RU    5. Kategoriyadan videolar  ║
-║  6. Qidirish     7. Top videolar            ║
-║  8. Video tafsilotlari                      ║
-║  9. JSON eksport 10. CSV eksport            ║
-║  11. MP4 URL eksport                        ║
-║  12. Statistika  13. Backup yaratish        ║
-║  14. Duplikatlarni tozalash                 ║
-║  0. Chiqish                                 ║
-╚══════════════════════════════════════════════╝
+┌──────────────────────────────────────────────────────┐
+│                      MENYU                           │
+├──────────────────────────────────────────────────────┤
+│  1. Barcha platformalardan yig'ish                  │
+│  2. Faqat LAT        3. Faqat BEST                  │
+│  4. Faqat 5RU        5. Kategoriyadan videolar      │
+│  6. Qidirish          7. Top videolar               │
+│  8. Video tafsilotlari                              │
+│  9. JSON eksport      10. CSV eksport               │
+│  11. TXT eksport      12. MP4 URL eksport           │
+│  13. BARCHA FORMATLARDA EKSPORT                     │
+│  14. Statistika       15. Backup yaratish           │
+│  16. Duplikatlarni tozalash                         │
+│  17. AVTOMATIK ISH REJIMI                           │
+│  0. Chiqish                                         │
+└──────────────────────────────────────────────────────┘
         """)
         
         ch = input("Tanlang: ").strip()
@@ -2542,15 +2132,13 @@ def interactive_menu(col: Collector) -> None:
             q = input("Qidiruv: ").strip()
             pl_input = input("Platforma: ").strip()
             pl = pl_input if pl_input else None
-            cat_input = input("Kategoriya: ").strip()
-            cat = cat_input if cat_input else None
-            results = col.search(q, pl, cat)
+            results = col.search(q, pl)
             if results:
                 for v in results[:20]:
                     print(f"  [{v['platform']}] {str(v.get('title',''))[:60]}")
                 print(f"\n✅ {len(results)} ta natija")
             else:
-                print("\n❌ Hech narsa topilmadi!")
+                print("\n❌ Topilmadi!")
         elif ch == '7':
             n = int(input("Nechta: ") or '20')
             pl_input = input("Platforma: ").strip()
@@ -2559,10 +2147,7 @@ def interactive_menu(col: Collector) -> None:
             if videos:
                 for i, v in enumerate(videos, 1):
                     premium = " 💎" if v.get('is_premium') else ""
-                    print(f"  {i}. [{v['platform']}]{premium} "
-                          f"{str(v.get('title',''))[:50]} - {v.get('views','')}")
-            else:
-                print("\n❌ Video topilmadi!")
+                    print(f"  {i}. [{v['platform']}]{premium} {str(v.get('title',''))[:50]} - {v.get('views','')}")
         elif ch == '8':
             vid = input("Video ID: ").strip()
             pl = input("Platforma: ").strip() or 'best'
@@ -2570,16 +2155,8 @@ def interactive_menu(col: Collector) -> None:
             if details:
                 print(json.dumps(details, ensure_ascii=False, indent=2))
             else:
-                print("❌ Topilmadi. Yangidan yig'ish kerak.")
-                if input("Yig'ishni xohlaysizmi? (ha/yo'q): ").lower() == 'ha':
-                    det = col.collect_details(vid, pl)
-                    if det:
-                        print(json.dumps(det, ensure_ascii=False, indent=2))
+                print("❌ Topilmadi!")
         elif ch == '9':
-            video_count = col.db.get_table_count('videos')
-            if video_count == 0:
-                print("\n❌ MA'LUMOTLAR BAZASI BO'SH! Avval 1-4 bandlarni tanlang.")
-                continue
             col.export_json()
         elif ch == '10':
             pl_input = input("Platforma: ").strip()
@@ -2588,15 +2165,24 @@ def interactive_menu(col: Collector) -> None:
         elif ch == '11':
             pl_input = input("Platforma: ").strip()
             pl = pl_input if pl_input else None
-            col.export_urls(pl)
+            col.export_txt(pl)
         elif ch == '12':
-            col._show_stats()
+            pl_input = input("Platforma: ").strip()
+            pl = pl_input if pl_input else None
+            col.export_urls(pl)
         elif ch == '13':
-            fp = col.backup()
-            print(f"✅ Backup: {fp}")
+            pl_input = input("Platforma: ").strip()
+            pl = pl_input if pl_input else None
+            col.export_all_formats(pl)
         elif ch == '14':
-            n = col.cleanup()
-            print(f"✅ {n} ta duplikat tozalandi")
+            col._show_stats()
+        elif ch == '15':
+            col.backup()
+        elif ch == '16':
+            col.cleanup()
+        elif ch == '17':
+            pages = int(input("Sahifalar (1-10): ") or '3')
+            col.run_auto(pages)
         elif ch == '0':
             print("\n👋 Xayr!")
             break
@@ -2605,4 +2191,12 @@ def interactive_menu(col: Collector) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Dastur to'xtatildi!")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"Kutilmagan xatolik: {e}", exc_info=True)
+        print(f"\n❌ Xatolik yuz berdi: {e}")
+        sys.exit(1)
