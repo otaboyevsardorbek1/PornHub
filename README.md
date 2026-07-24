@@ -1,44 +1,85 @@
-<p align="center"><img src="https://i.postimg.cc/JhJywSMF/logo7-10-14120.png" style="width:100%"></p>
+# Content Search Bot v2.0
 
-warning !, this is a telegram bot that contains adult content, access restrictions for this bot will be implemented soon, please don't report this repository and the example bot if you keep want to use it.
+## Tavsif
+Bu bot foydalanuvchilarga SQLite ma'lumotlar bazasidan video kontentlarni qidirish va ularning ma'lumotlarini ko'rish imkonini beradi.
 
-### PORNHUB DOWNLOADER BOT
+## Xususiyatlar
+- ✅ Inline qidiruv (SQLite bazadan)
+- ✅ Kategoriya bo'yicha ko'rish
+- ✅ Top videolar
+- ✅ Premium tizimi
+- ✅ Foydalanuvchi roziligi
+- ✅ Kanal majburiy obunasi
+- ✅ Admin panel
+- ✅ Xabar tarqatish
+- ✅ Statistika
 
-Simply way to deploy this bot, go deploy on heroku.
+## O'rnatish
 
-<b>
-<a href="https://heroku.com/deploy?template=https://github.com/aryazakaria01/PornHub"><img src="https://img.shields.io/badge/DEPLOY ON HEROKU-Canary?style=badge&logo=heroku"width="310" height="50"/></a>
-</b>
-
-### FIND US ON TELEGRAM !!
-
-<a href="https://t.me/IamOkayy"><img src="https://img.shields.io/badge/BOT OWNER-blue?style=for-the-badge&logo=Telegram" /></a>
-<a href="https://t.me/FumikaSupportGroup"><img src="https://img.shields.io/badge/GROUP SUPPORT-black?style=for-the-badge&logo=Telegram" /></a>
-<a href="https://t.me/SakuraEmpireTeam"><img src="https://img.shields.io/badge/CHANNEL-gold?style=for-the-badge&logo=Telegram" /></a>
-<a href="https://t.me/phdl_tgbot"><img src="https://img.shields.io/badge/EXAMPLE BOT-magenta?style=for-the-badge&logo=Telegram" /></a>
-
-## VPS Deployment 📡
-Get the best Quality of streaming performance by hosting it on VPS, here's the step's:
-
-```sh
-sudo apt update && apt upgrade -y
-sudo apt install git curl python3-pip ffmpeg -y
-pip3 install -U pip
-git clone https://github.com/aryazakaria01/PornHub # clone the repo.
-cd PornHub
-pip3 install -U -r requirements.txt
-cp sample.env .env # use vim to edit ENVs
-vim .env # fill up the ENVs (Steps: press i to enter in insert mode then edit the file. Press Esc to exit the editing mode then type :wq! and press Enter key to save the file).
-python3 -m PornHub # run the bot.
-
-# continue the host with screen or anything else, thanks for reading.
+### 1. Talablar
+```bash
+pip install -r requirements.txt
 ```
 
-
-### COMMAND FOR BOT 
+### 2. Konfiguratsiya
+`.env.example` faylini `.env` ga nusxa oling va qiymatlarni to'ldiring:
+```bash
+cp .env.example .env
+nano .env
 ```
-start - Start the bot
-repo - Give you a source code
-help - Guide for use
+
+### 3. Ma'lumotlar bazasini yaratish
+`xxx_contend.py` dasturini ishga tushiring va ma'lumotlarni yig'ing:
+```bash
+python xxx_contend.py --auto
 ```
 
+### 4. Botni ishga tushirish
+```bash
+python main.py
+```
+
+## Foydalanish
+
+### Foydalanuvchi komandalar
+- `/start` - Botni ishga tushirish
+- `/help` - Yordam
+- `/search [so'rov]` - Video qidirish
+- `/top` - Top videolar
+- `/profile` - Shaxsiy profil
+
+### Admin komandalar
+- `/admin` - Admin panel
+- `/stats` - Statistika
+- `/users` - Foydalanuvchilar ro'yxati
+- `/gcast` - Xabar tarqatish (reply bilan)
+- `/addpremium [id] [kun]` - Premium berish
+
+### Inline qidiruv
+```
+@botname qidiruv so'rovi
+```
+
+## Arxitektura
+```
+Content Bot
+├── xxx_contend.py      # Ma'lumotlarni yig'ish
+├── database.py         # SQLite boshqaruvi
+├── config.py           # Konfiguratsiya
+├── bot.py              # Asosiy bot
+├── main.py             # Ishga tushirish
+└── handlers/
+    ├── start.py        # Start, rozilik
+    ├── search.py       # Qidiruv
+    ├── video.py        # Video ma'lumotlari
+    └── admin.py        # Admin panel
+```
+
+## Xavfsizlik
+- Tokenlar .env faylda saqlanadi
+- SQL injection himoyasi
+- Rate limiting
+- Foydalanuvchi ma'lumotlari himoyasi
+
+## Litsenziya
+Bu bot faqat ta'lim maqsadlarida ishlatiladi.
